@@ -47,10 +47,10 @@ intents.message_content = True  # must also be enabled in the Developer Portal
 
 # Namespace policy: this server may host other people's Muse bots, so this
 # bot never occupies generic command names. Text commands require either a
-# mention of this bot or the unique "!asari " prefix. Slash commands live
-# under the /asari group.
+# mention of this bot or the unique "!asari-muse " prefix. Slash commands live
+# under the /asari-muse group.
 bot = commands.Bot(
-    command_prefix=commands.when_mentioned_or("!asari "),
+    command_prefix=commands.when_mentioned_or("!asari-muse "),
     intents=intents,
     help_command=None,
     proxy=PROXY,
@@ -65,7 +65,7 @@ async def on_ready() -> None:
         log.info("Synced %d slash command(s).", len(synced))
     except Exception:  # sync failure should not kill the resident bot
         log.exception("Slash command sync failed")
-    await bot.change_presence(activity=discord.Game(name="@メンションで対話 / !asari help"))
+    await bot.change_presence(activity=discord.Game(name="@メンションで対話 / !asari-muse help"))
 
 
 async def _target_message(ctx: commands.Context, arg: str | None) -> discord.Message | None:
@@ -95,7 +95,7 @@ async def help_cmd(ctx: commands.Context) -> None:
     embed = discord.Embed(title="asari-muse のコマンド", color=0x5865F2)
     embed.description = (
         "呼び出し方は2通り（他のBotと名前がぶつからないよう、専用の呼び方だけに反応します）:\n"
-        "メンション: `@asari-muse ping` / プレフィックス: `!asari ping`\n\n"
+        "メンション: `@asari-muse ping` / プレフィックス: `!asari-muse ping`\n\n"
         "• `ping` — 生存確認\n"
         "• `thread タイトル` — このメッセージから公開スレッドを作成\n"
         "• `pin [メッセージID]` — メッセージをピン留め（返信先の指定も可）\n"
@@ -104,8 +104,8 @@ async def help_cmd(ctx: commands.Context) -> None:
         "• `tts 文章` — 読み上げ用メッセージを送信\n"
         "• `join` / `leave` — ボイスチャンネルに参加 / 退出\n"
         "• `event 名前 | 開始 | 終了 | 場所 | 説明` — サーバーイベントを作成\n"
-        "  例: `!asari event 勉強会 | 2026-11-01 20:00 | 2026-11-01 21:00 | オンライン | 資料は事前に共有`\n"
-        "• `/asari ping` — スラッシュコマンド版の生存確認\n"
+        "  例: `!asari-muse event 勉強会 | 2026-11-01 20:00 | 2026-11-01 21:00 | オンライン | 資料は事前に共有`\n"
+        "• `/asari-muse ping` — スラッシュコマンド版の生存確認\n"
         "• メンションして普通に話しかけると、オーナー本人だけ対話できます"
     )
     await ctx.reply(embed=embed)
@@ -221,7 +221,7 @@ async def event_cmd(ctx: commands.Context, *, spec: str) -> None:
         await ctx.reply(f"イベントを作成できませんでした: {exc.text}")
 
 
-asari_group = discord.app_commands.Group(name="asari", description="asari-muse のコマンド")
+asari_group = discord.app_commands.Group(name="asari-muse", description="asari-muse のコマンド")
 
 
 @asari_group.command(name="ping", description="Botの生存確認をします")
@@ -238,6 +238,11 @@ QUEUE_DIR = os.path.join(BASE_DIR, "queue")
 PENDING_PATH = os.path.join(QUEUE_DIR, "pending.jsonl")
 LOCK_PATH = os.path.join(QUEUE_DIR, "queue.lock")
 OWNER_PATH = os.path.join(BASE_DIR, "owner.json")
+PEERS_PATH = os.path.join(BASE_DIR, "peers.json")
+
+# Bot-to-bot runaway guard: per-channel count of consecutive peer
+# exchanges. Reset whenever any human posts in the channel.
+_peer_chain: dict[str, int] = {}
 
 
 def _owner_id() -> str | None:
@@ -246,6 +251,15 @@ def _owner_id() -> str | None:
             return str(json.load(f).get("owner_id") or "") or None
     except Exception:
         return None
+
+
+def _peers() -> tuple[dict, int]:
+    try:
+        with open(PEERS_PATH) as f:
+            data = json.load(f)
+        return data.get("peers", {}), int(data.get("max_chain", 8))
+    except Exception:
+        return {}, 8
 
 
 def _enqueue(entry: dict) -> None:
@@ -261,7 +275,40 @@ def _enqueue(entry: dict) -> None:
 @bot.event
 async def on_message(message: discord.Message) -> None:
     if message.author.bot:
+        # Peer-assistant conversation: allowlisted bots (peers.json) that
+        # mention us are queued as kind="peer" for the bridge, with a
+        # per-channel chain cap so two bots cannot loop forever. Any
+        # human message in the channel resets the counter (below).
+        peers, max_chain = _peers()
+        peer = peers.get(str(message.author.id))
+        mentioned = bot.user is not None and bot.user in message.mentions
+        if peer and mentioned and message.guild is not None:
+            ch = str(message.channel.id)
+            if _peer_chain.get(ch, 0) < max_chain:
+                content = message.clean_content
+                if bot.user is not None:
+                    content = content.replace(f"@{bot.user.display_name}", "").strip()
+                first_word = content.split(maxsplit=1)[0].lower() if content else ""
+                if first_word not in {c.name for c in bot.commands}:
+                    _peer_chain[ch] = _peer_chain.get(ch, 0) + 1
+                    _enqueue({
+                        "id": uuid.uuid4().hex,
+                        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        "guild_id": str(message.guild.id),
+                        "channel_id": ch,
+                        "message_id": str(message.id),
+                        "author_id": str(message.author.id),
+                        "author_name": peer.get("name") or message.author.display_name,
+                        "content": content[:1500],
+                        "kind": "peer",
+                    })
+                    try:
+                        await message.add_reaction("👀")
+                    except discord.HTTPException:
+                        pass
         return
+    # Any human message resets the peer chain for that channel.
+    _peer_chain.pop(str(message.channel.id), None)
     mentioned = bot.user is not None and bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
     if mentioned or is_dm:
@@ -294,7 +341,7 @@ async def on_message(message: discord.Message) -> None:
                 except discord.HTTPException:
                     pass
         elif mentioned:
-            await message.reply("私はオーナー専用のBotです。コマンドは `!asari help` を見てください。")
+            await message.reply("私はオーナー専用のBotです。コマンドは `!asari-muse help` を見てください。")
     await bot.process_commands(message)
 
 

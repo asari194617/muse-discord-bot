@@ -3,7 +3,9 @@
 Usage: fetch_channel.py <channel_id> [limit]
 Reads the bot token from .env and the egress proxy from the live
 environment first, then proxy.env (both in this directory).
-Prints a JSON array of {id, author_id, author_name, content, ts}.
+Prints a JSON array of {id, author_id, author_name, content, ts, reply_to}.
+reply_to is {id, author_name, content, ts} of the referenced message when the
+message is a reply, else null.
 Never prints the token.
 """
 
@@ -55,6 +57,24 @@ def api(path: str):
         return json.load(r)
 
 
+def _fetch_refs(channel_id: str, refs: dict) -> dict:
+    """Fetch referenced (replied-to) messages, deduplicated by id."""
+    out = {}
+    for mid, ch in refs.items():
+        try:
+            rm = api(f"/channels/{ch}/messages/{mid}")
+            ra = rm.get("author", {})
+            out[mid] = {
+                "id": mid,
+                "author_name": ra.get("global_name") or ra.get("username"),
+                "content": rm.get("content", ""),
+                "ts": rm.get("timestamp"),
+            }
+        except Exception:
+            out[mid] = {"id": mid, "error": "fetch failed"}
+    return out
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -62,9 +82,18 @@ def main() -> int:
     channel_id = sys.argv[1]
     limit = min(int(sys.argv[2]) if len(sys.argv) > 2 else 20, 100)
     msgs = api(f"/channels/{channel_id}/messages?limit={limit}")
+    refs = {}
+    for m in msgs:
+        ref = m.get("message_reference") or {}
+        ref_mid = ref.get("message_id")
+        if ref_mid and ref_mid not in refs:
+            refs[ref_mid] = ref.get("channel_id") or channel_id
+    ref_cache = _fetch_refs(channel_id, refs)
     out = []
     for m in msgs:
         author = m.get("author", {})
+        ref = m.get("message_reference") or {}
+        ref_mid = ref.get("message_id")
         out.append(
             {
                 "id": m.get("id"),
@@ -72,6 +101,7 @@ def main() -> int:
                 "author_name": author.get("global_name") or author.get("username"),
                 "content": m.get("content", ""),
                 "ts": m.get("timestamp"),
+                "reply_to": ref_cache.get(ref_mid) if ref_mid else None,
             }
         )
     print(json.dumps(out, ensure_ascii=False, indent=1))

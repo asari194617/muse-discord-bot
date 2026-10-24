@@ -3,8 +3,8 @@
 Discord サーバー向けに自作する常駐 Bot の土台。
 
 ## 構成
-- `bot.py` — discord.py 製 Bot 本体。コマンド: ping / help / thread / pin / poll / react / tts / join / leave / event、スラッシュは `/asari` グループ配下、メンション対話（オーナーのみ、橋渡し方式）
-- コマンド名前空間ポリシー（複数人の Muse Bot が同居する前提）: 汎用名を占有しない。テキストコマンドの起動は「このBotへのメンション」か専用プレフィックス `!asari ` のみ（素の `!ping` 等には反応しない）。スラッシュコマンドも `/asari ...` グループに集約
+- `bot.py` — discord.py 製 Bot 本体。コマンド: ping / help / thread / pin / poll / react / tts / join / leave / event、スラッシュは `/asari-muse` グループ配下、メンション対話（オーナーのみ、橋渡し方式）
+- コマンド名前空間ポリシー（複数人の Muse Bot が同居する前提）: 汎用名を占有しない。テキストコマンドの起動は「このBotへのメンション」か専用プレフィックス `!asari-muse ` のみ（素の `!ping` 等には反応しない）。スラッシュコマンドも `/asari ...` グループに集約
 - 付与権限への対応: スレッド作成、ピン留め、投票、TTS、リアクション、埋め込み、ボイス参加、サーバーイベント作成を実装。Mention Everyone は安全のため未使用（権限は予約扱い）。声メッセージ送信・カスタム絵文字/サウンドボード作成・動画配信は v1 では未実装
 - `.venv/` — Python 仮想環境（discord.py 2.x）
 - `.env` — Bot トークン（`DISCORD_BOT_TOKEN=...`、権限 600、Git 管理外）
