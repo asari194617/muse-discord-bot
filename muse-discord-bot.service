@@ -1,0 +1,16 @@
+[Unit]
+Description=Muse resident Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hatch/workspace/discord-bot
+EnvironmentFile=/home/hatch/workspace/discord-bot/.env
+EnvironmentFile=/home/hatch/workspace/discord-bot/proxy.env
+ExecStart=/home/hatch/workspace/discord-bot/.venv/bin/python /home/hatch/workspace/discord-bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

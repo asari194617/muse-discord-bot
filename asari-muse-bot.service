@@ -1,0 +1,15 @@
+[Unit]
+Description=asari-muse Discord bot (resident on dcon2027)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/asari194617/asari-muse
+EnvironmentFile=/home/asari194617/asari-muse/.env
+ExecStart=/home/asari194617/asari-muse/.venv/bin/python /home/asari194617/asari-muse/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
